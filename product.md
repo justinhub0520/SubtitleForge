@@ -1,585 +1,569 @@
-# SubtitleForge - 视频字幕生成与剪辑工具
+# SubForge - 视频字幕生成与剪辑工具 产品设计文档
 
-## 项目概述
+> **项目代号**: SubForge
+> **目标用户**: 视频创作者、字幕翻译人员
+> **技术定位**: C++ 实习简历项目，展示 C++ 后端工程 + Qt GUI + 前后端分离架构能力
+> **日期**: 2026-04-28
 
-SubtitleForge 是一款基于 C++ 后端 + Web 前端的视频字幕生成与剪辑工具，支持上传视频、自动生成字幕、时间轴编辑、字幕样式调整、导出带硬字幕的视频。采用任务队列架构，支持短视频到长视频的全长度处理。
+## 1. 项目概述
 
-**目标用户：** 视频创作者、字幕组、内容本地化团队
+SubForge 是一款视频字幕生成与剪辑桌面工具，支持上传视频、自动生成字幕、时间轴编辑、字幕样式调整、导出带字幕的视频。全功能端到端可用，界面专业，交互完整。
 
-**核心价值：** 本地离线运行、零 API 费用、专业级字幕编辑、一键硬字幕烧录
-
-## 技术栈
-
-| 层级 | 技术 | 说明 |
-|------|------|------|
-| 前端 | HTML5 + CSS + Vanilla JS | 单 HTML 文件交付，无框架依赖 |
-| 前端样式 | Tailwind CSS (CDN) | 暗色主题，专业编辑器风格 |
-| 前端视频 | HTML5 Video + Canvas | 视频播放 + 字幕叠加预览 |
-| 前端时间轴 | Canvas 2D | 拖拽、缩放、选中字幕块 |
-| 后端语言 | C++17 | 现代C++，跨平台 |
-| HTTP 服务器 | cpp-httplib (header-only) | 轻量 REST API 网关 |
-| JSON 处理 | nlohmann/json (header-only) | 请求/响应序列化 |
-| ASR 引擎 | whisper.cpp | OpenAI Whisper 本地模型，支持中英文 |
-| 视频处理 | FFmpeg libav* (C API) | 音频提取、字幕烧录、截帧 |
-| 日志 | spdlog | 结构化日志 |
-| 构建 | CMake 3.20+ | 跨平台构建系统 |
-
-## 系统架构
-
-### 整体架构图
+**核心价值链**:
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                   单 HTML 前端 (浏览器)                    │
-│                                                           │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐    │
-│  │ 视频上传  │ │ 时间轴编辑│ │ 字幕编辑器│ │ 样式面板  │    │
-│  │ 拖拽/选择 │ │ Canvas   │ │ 文字修改  │ │ 字体/颜色 │    │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘    │
-│  ┌──────────┐ ┌──────────┐                               │
-│  │ 视频预览  │ │ 导出面板  │                               │
-│  │ HTML5 V  │ │ 进度/下载 │                               │
-│  └──────────┘ └──────────┘                               │
-└─────────────────────┬────────────────────────────────────┘
-                      │ REST API (JSON)
-┌─────────────────────▼────────────────────────────────────┐
-│              C++ API 网关 (cpp-httplib)                    │
-│                                                           │
-│  ┌─────────────────────────────────────────────────────┐ │
-│  │ 路由层                                               │ │
-│  │  POST /api/upload      → 上传视频，返回任务ID         │ │
-│  │  POST /api/transcribe  → 提交ASR识别任务              │ │
-│  │  GET  /api/tasks/:id   → 查询任务状态/进度            │ │
-│  │  GET  /api/subtitles   → 获取字幕列表                 │ │
-│  │  PUT  /api/subtitles   → 更新字幕(时间/文字/样式)      │ │
-│  │  POST /api/export      → 提交导出任务                 │ │
-│  │  GET  /api/preview     → 获取预览帧(带字幕叠加)       │ │
-│  │  GET  /api/download/:id→ 下载导出文件                 │ │
-│  └─────────────────────────────────────────────────────┘ │
-│  ┌──────────────────┐  ┌──────────────────┐              │
-│  │ 中间件            │  │ 静态文件服务      │              │
-│  │ CORS / 日志 / 限流│  │ index.html       │              │
-│  └──────────────────┘  └──────────────────┘              │
-└────────┬────────────────────────────┬────────────────────┘
-         │                            │
-┌────────▼─────────┐       ┌─────────▼────────────────────┐
-│   任务调度器       │       │       Worker 进程池           │
-│                   │       │                              │
-│ ┌───────────────┐│       │  ┌────────────────────────┐  │
-│ │ 任务队列       ││ 分发   │  │ ASR Worker             │  │
-│ │ (内存+文件)    ││──────▶│  │ whisper.cpp            │  │
-│ │               ││       │  │ 分片音频 → 文本         │  │
-│ │ 优先级管理     ││       │  └────────────────────────┘  │
-│ │ 状态追踪       ││       │  ┌────────────────────────┐  │
-│ │               ││       │  │ Export Worker           │  │
-│ └───────────────┘│       │  │ FFmpeg libav*           │  │
-│                   │       │  │ 烧录字幕 → 新视频       │  │
-│ ┌───────────────┐│       │  └────────────────────────┘  │
-│ │ 进度追踪器     ││       │  ┌────────────────────────┐  │
-│ │ 文件状态轮询   ││       │  │ Preview Worker          │  │
-│ │ 前端进度推送   ││       │  │ FFmpeg 截帧+字幕叠加    │  │
-│ └───────────────┘│       │  └────────────────────────┘  │
-└──────────────────┘       └──────────────────────────────┘
+上传视频 → 提取音频 → DashScope 大模型 (fun-asr) 生成字幕 → 时间轴可视化编辑 → 样式调整 → FFmpeg 烧录导出
 ```
 
-### 进程模型
+## 2. 技术栈
+
+| 层级 | 技术 | 说明 | 平台 |
+|------|------|------|------|
+| **前端 GUI** | Qt 6 (QWidget) | 桌面应用，自定义组件 | **Windows** |
+| **视频播放** | QVideoWidget + QMediaPlayer | Qt 多媒体模块 | **Windows** |
+| **HTTP 客户端** | QNetworkAccessManager | Qt 网络模块，与后端通信 | **Windows** |
+| **后端 HTTP 服务** | cpp-httplib | 轻量级 C++ HTTP 库，单头文件引入 | **Linux** |
+| **语音识别** | 阿里云 DashScope (fun-asr) | 大模型语音识别 API，后端转发调用 | **Linux** |
+| **视频处理** | FFmpeg (C++ 调用) | 音频提取、字幕烧录、视频编码导出 | **Linux** |
+| **数据交换** | JSON (nlohmann/json) | 前后端统一数据格式 | **Win + Linux** |
+| **构建系统** | CMake | 前后端独立构建管理 | **Win + Linux** |
+| **配置管理** | .env 文件 | API Key 等敏感配置，不硬编码 | **Win + Linux** |
+
+## 3. 系统架构
+
+### 3.1 整体架构（方案 B：Qt 前端 + C++ HTTP 后端分离）
 
 ```
-主进程 (subtitleforge)
-├── HTTP 服务器线程
-├── 任务调度线程
-├── 进度轮询线程
-└── Worker 子进程管理
-    ├── asr_worker (按需启动)
-    ├── export_worker (按需启动)
-    └── preview_worker (按需启动)
+┌──────────────────────────────────────┐
+│           Qt Desktop App (前端)       │
+│  ┌──────────────────────────────────┐│
+│  │ MainWindow                       ││
+│  │ ┌────────────┬──────────────────┐││
+│  │ │VideoPlayerWidget│TimelineEditor  │││
+│  │ │(QVideoWidget)│(自定义QWidget) │││
+│  │ └────────────┴──────────────────┘││
+│  │ SubtitleListWidget               ││
+│  │ StyleEditorWidget                ││
+│  └──────────────────────────────────┘│
+│  ApiClient (QNetworkAccessManager)   │
+└──────────────┬───────────────────────┘
+               │ REST API (JSON)
+               │ http://<linux-server-ip>:8080
+┌──────────────┴───────────────────────┐
+│        C++ HTTP Backend (后端)        │
+│  (cpp-httplib)                       │
+│  ┌──────────────────────────────────┐│
+│  │ POST /api/videos/upload    → 接收视频 ││
+│  │ POST /api/tasks/transcribe → 转写任务 ││
+│  │ GET  /api/tasks/:task_id   → 任务进度 ││
+│  │ POST /api/tasks/export     → FFmpeg  ││
+│  │ GET  /api/videos/:id/download → 下载  ││
+│  │ GET  /api/videos/:id/subtitles→字幕  ││
+│  └──────────────────────────────────┘│
+└──────────────────────────────────────┘
 ```
 
-**Worker 通信机制：**
-- 主进程通过 `fork/exec` 启动 Worker 子进程
-- 通过命令行参数传递任务配置（JSON 文件路径）
-- Worker 通过写 JSON 状态文件汇报进度
-- 主进程轮询状态文件，更新任务进度
-- Worker 完成后退出，主进程回收资源
+### 3.2 架构选择理由
 
-## 数据模型
+| 对比项 | 方案A(Qt全栈本地) | 方案B(Qt+HTTP分离) | 方案C(Qt+gRPC) |
+|--------|-------------------|--------------------|-----------------|
+| UI 阻塞风险 | 高(重处理同进程) | 低(前后端分离) | 低 |
+| 工程复杂度 | 低 | 中 | 高 |
+| 简历亮点 | C++/Qt 全栈 | C++后端+Qt+REST设计 | 过度设计 |
+| 可扩展性 | 低 | 高 | 高 |
+| **选择** | ❌ | ✅ | ❌ |
 
-### Task（任务）
+选择方案 B 的核心原因：
+- FFmpeg 编码和 DashScope 转写调用耗时较长，分离后端避免 UI 卡顿
+- REST API 设计体现前后端分离工程素养，简历加分
+- 后端可独立测试，便于调试和迭代
+- **Linux 后端 + Windows 前端跨平台部署**，简历上体现跨平台 C++ 开发能力
 
+### 3.3 跨平台部署架构
+
+```
+┌─────────────────────────────────┐     ┌──────────────────────────────────────┐
+│  Windows 开发机 (前端运行环境)    │     │  VMware Ubuntu 20.04 (后端运行环境)   │
+│                                 │     │  IP: 192.168.199.132                  │
+│  Qt Desktop App                 │─────│  C++ HTTP Backend (cpp-httplib)      │
+│  - 视频播放、时间轴编辑           │ HTTP│  - 视频接收、音频提取(FFmpeg)        │
+│  - 样式调整、导出设置             │ REST│  - DashScope 转写                  │
+│  - 字幕数据管理(本地)             │ :8080│  - FFmpeg 字幕烧录导出              │
+│                                 │     │  - 任务进度管理                      │
+│  视频文件本地存储                 │     │  视频文件服务器存储                   │
+│  字幕数据本地 JSON               │     │  临时文件 /tmp/subforge/            │
+└─────────────────────────────────┘     └──────────────────────────────────────┘
+```
+
+**关键设计决策**：
+- 前端(Windows)负责所有 UI 交互和字幕编辑，视频文件在本地播放
+- 后端运行在 VMware Ubuntu 20.04 虚拟机 (IP: 192.168.199.132)，负责视频处理（音频提取、字幕烧录）
+- 前端上传视频文件到后端 (http://192.168.199.132:8080)，后端处理完成后前端下载导出结果
+- 开发阶段：后端运行在 VMware Ubuntu 20.04 虚拟机
+- 部署阶段：后端部署在 Linux 服务器，前端打包为 Windows 安装包
+
+## 4. 功能模块设计
+
+### 4.1 功能模块总览
+
+| 模块 | 前端(Qt) | 后端(C++) | 说明 |
+|------|----------|-----------|------|
+| 1. 视频管理 | 文件选择、视频预览、播放控制 | `/api/videos/upload` 接收视频、提取音频 | QVideoWidget 播放，后端 FFmpeg 提取音频 |
+| 2. 字幕生成 | 提交任务、进度显示、结果预览 | `/api/tasks/transcribe` 调用 DashScope (fun-asr) | 支持中英文，返回带时间戳的字幕数据 |
+| 3. 时间轴编辑 | 可视化时间轴、拖拽字幕块、逐句编辑 | 纯前端操作(无需后端) | 自定义 QWidget，字幕块可拖拽缩放 |
+| 4. 字幕样式 | 字体、大小、颜色、位置、背景、实时预览 | `/api/tasks/export` 时应用样式到 FFmpeg 参数 | 预设模板 + 自定义 |
+| 5. 视频导出 | 导出设置、进度条 | `/api/tasks/export` FFmpeg 硬字幕烧录 | MP4 输出，进度实时推送 |
+
+### 4.2 各模块详细设计
+
+#### 模块1: 视频管理
+
+**前端组件**: `VideoPlayerWidget` (基于 QVideoWidget + QMediaPlayer)
+- 支持点击选择打开本地视频文件
+- 视频播放器：播放/暂停/停止、进度联动
+- 播放时同步高亮当前字幕
+
+**后端接口**:
+- `POST /api/videos/upload`：接收视频文件(multipart/form-data)，提取音频(WAV格式)，返回 video_id 和 video_info
+- 后端使用 FFmpeg 命令 `ffmpeg -i input.mp4 -vn -acodec pcm_s16le audio.wav` 提取音频
+
+**数据模型**:
 ```json
 {
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "type": "transcribe",
-  "status": "running",
-  "progress": 0.65,
-  "video_id": "vid_abc123",
-  "created_at": 1714300800,
-  "started_at": 1714300801,
-  "completed_at": null,
-  "result": null,
-  "error": null
-}
-```
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | string (UUID) | 任务唯一标识 |
-| type | enum | "transcribe" / "export" / "preview" |
-| status | enum | "queued" / "running" / "completed" / "failed" |
-| progress | float | 进度 0.0 ~ 1.0 |
-| video_id | string | 关联的视频ID |
-| created_at | timestamp | 创建时间 |
-| started_at | timestamp | 开始执行时间 |
-| completed_at | timestamp | 完成时间 |
-| result | json | 任务结果（字幕数据/文件路径） |
-| error | string | 失败原因 |
-
-### Subtitle（字幕）
-
-```json
-{
-  "id": 1,
-  "index": 1,
-  "start_time": 0.0,
-  "end_time": 3.5,
-  "text": "你好，欢迎来到 SubtitleForge",
-  "style": {
-    "font_family": "Noto Sans SC",
-    "font_size": 24,
-    "font_color": "#FFFFFF",
-    "stroke_color": "#000000",
-    "stroke_width": 2,
-    "background_color": "#000000",
-    "background_opacity": 0.6,
-    "position": "bottom",
-    "offset_y": 30
+  "video_id": "uuid-string",
+  "video_info": {
+    "file_path": "/tmp/subforge/uuid/input.mp4",
+    "audio_path": "/tmp/subforge/uuid/audio.wav",
+    "duration": 120.5,
+    "resolution": { "width": 1920, "height": 1080 },
+    "fps": 30,
+    "format": "mp4",
+    "size_mb": 85.3
   }
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| id | int | 字幕唯一标识 |
-| index | int | 字幕序号 |
-| start_time | float | 起始时间（秒） |
-| end_time | float | 结束时间（秒） |
-| text | string | 字幕文本内容 |
-| style | SubtitleStyle | 字幕样式（继承全局样式，可单独覆盖） |
+#### 模块2: 字幕生成
 
-### SubtitleStyle（字幕样式）
+**前端组件**: MainWindow 内置 Generate Subtitles 功能
+- 上传视频后点击 "Generate Subtitles" → 调用 `/api/tasks/transcribe`
+- 通过轮询 `/api/tasks/:task_id` 获取进度
+- 生成完成后字幕数据加载到时间轴
 
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| font_family | string | "Noto Sans SC" | 字体名称 |
-| font_size | int | 24 | 字体大小（像素） |
-| font_color | string | "#FFFFFF" | 字体颜色 |
-| stroke_color | string | "#000000" | 描边颜色 |
-| stroke_width | int | 2 | 描边宽度 |
-| background_color | string | "#000000" | 背景颜色 |
-| background_opacity | float | 0.6 | 背景透明度 |
-| position | enum | "bottom" | 位置：top/center/bottom |
-| offset_y | int | 30 | Y轴偏移（像素） |
+**后端接口**:
+- `POST /api/tasks/transcribe`：参数 `{video_id, language}`, 调用阿里云 DashScope 语音识别 API (fun-asr 模型)
+- DashScope 转写调用流程：
+  1. 读取提取的音频文件
+  2. 通过 `/usr/bin/curl` 调用 `https://dashscope.aliyuncs.com/api/v1/files` 上传音频
+  3. 提交异步转写任务至 `https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription`
+  4. 轮询 `/api/v1/tasks/{task_id}` 等待转写完成
+  5. 解析返回的 SRT/JSON 格式结果，转换为内部字幕数据结构
+- `GET /api/tasks/:task_id`：返回 `{task_id, progress: 0-100, status: "pending/processing/done/error"}`
 
-### Video（视频）
-
+**字幕数据结构**:
 ```json
 {
-  "id": "vid_abc123",
-  "filename": "demo.mp4",
-  "file_path": "/data/uploads/vid_abc123/demo.mp4",
-  "duration": 125.5,
-  "width": 1920,
-  "height": 1080,
-  "fps": 30.0,
-  "codec": "h264",
-  "audio_codec": "aac",
-  "thumbnail_path": "/data/uploads/vid_abc123/thumb.jpg"
-}
-```
-
-## API 设计
-
-### 上传视频
-
-```
-POST /api/upload
-Content-Type: multipart/form-data
-
-Body: video file
-
-Response 200:
-{
-  "video_id": "vid_abc123",
-  "filename": "demo.mp4",
-  "duration": 125.5,
-  "width": 1920,
-  "height": 1080,
-  "fps": 30.0,
-  "thumbnail_url": "/api/thumbnail/vid_abc123"
-}
-```
-
-### 提交 ASR 识别任务
-
-```
-POST /api/transcribe
-Content-Type: application/json
-
-Body:
-{
-  "video_id": "vid_abc123",
-  "language": "zh",
-  "model": "base"
-}
-
-Response 202:
-{
-  "task_id": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "queued"
-}
-```
-
-### 查询任务状态
-
-```
-GET /api/tasks/:id
-
-Response 200:
-{
-  "task_id": "550e8400-e29b-41d4-a716-446655440000",
-  "type": "transcribe",
-  "status": "running",
-  "progress": 0.65,
-  "current_segment": 13,
-  "total_segments": 20
-}
-```
-
-### 获取字幕列表
-
-```
-GET /api/subtitles?video_id=vid_abc123
-
-Response 200:
-{
-  "video_id": "vid_abc123",
   "subtitles": [
     {
       "id": 1,
-      "index": 1,
-      "start_time": 0.0,
-      "end_time": 3.5,
-      "text": "你好，欢迎来到 SubtitleForge",
-      "style": { ... }
+      "start_time": 0.5,
+      "end_time": 3.2,
+      "text": "大家好，欢迎来到我的频道",
+      "style": {
+        "font_family": "Microsoft YaHei",
+        "font_size": 24,
+        "color": "#FFFFFF",
+        "bg_color": "#00000080",
+        "position": "bottom_center",
+        "bold": false,
+        "italic": false,
+        "outline_width": 2,
+        "outline_color": "#000000"
+      }
     }
-  ],
-  "global_style": { ... }
+  ]
 }
 ```
 
-### 更新字幕
+**字幕样式预设值**（style 字段的默认值）:
+- `font_family`: "Microsoft YaHei"（中文默认），"Arial"（英文默认）
+- `font_size`: 24
+- `color`: "#FFFFFF"（白色）
+- `bg_color`: "#00000080"（半透明黑色背景）
+- `position`: "bottom_center"（底部居中）
+- `bold`: false
+- `italic`: false
+- `outline_width`: 2
+- `outline_color`: "#000000"（黑色描边）
 
+#### 模块3: 时间轴编辑
+
+**前端组件**: `TimelineEditor` (自定义 QWidget)
+- 水平时间轴，时间刻度标注(每秒/每5秒/每10秒自适应)
+- 字幕块渲染为彩色矩形条，宽度对应时间长度
+- 交互操作：
+  - 拖拽字幕块：调整起止时间
+  - 拖拽字幕块边缘：缩放时长
+  - 双击字幕块：弹出文本编辑框
+  - 右键菜单：删除、拆分、合并相邻字幕
+  - 点击空白区域：添加新字幕块
+- 视频播放进度指示线（红色竖线），同步联动
+- 缩放控制：放大/缩小时间轴精度
+- 撤销/重做支持(QUndoCommand)
+
+**纯前端操作**: 时间轴编辑不涉及后端调用，所有修改在本地内存中完成，导出时才将最终字幕数据发送给后端
+
+**键盘快捷键**:
+- `Space`: 播放/暂停
+- `Ctrl+Z`: 撤销
+- `Ctrl+Y`: 重做
+- `Delete`: 删除选中字幕
+- `Ctrl+S`: 保存字幕数据到本地 JSON 文件（保存到 `~/.subforge/projects/{video_id}/subtitles.json`，下次打开同一视频自动加载历史字幕）
+
+#### 模块4: 字幕样式
+
+**前端组件**: `StyleEditorWidget` (QWidget)
+- 字体选择下拉框(QFontComboBox)
+- 字体大小选择(QSpinBox: 8-72)
+- 位置选择(top_center / middle_center / bottom_center)
+- 加粗/斜体切换
+- 颜色选择（待添加）
+- 描边调节（待添加）
+
+**样式应用方式**: 导出时将样式参数转换为 FFmpeg subtitles filter 的参数：
 ```
-PUT /api/subtitles
-Content-Type: application/json
+ffmpeg -i input.mp4 -vf "subtitles=sub.srt:force_style='FontName=Microsoft YaHei,FontSize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Alignment=2'" output.mp4
+```
 
-Body:
+#### 模块5: 视频导出
+
+**前端组件**: MainWindow 集成导出功能
+- "Export Video with Subtitles" 菜单项 → 弹出 `QFileDialog::getSaveFileName` 选择保存路径
+- 默认保存至系统 Videos 文件夹
+- 点击保存后前端调用 `POST /api/tasks/export` → 等待响应 → 调用 `GET /api/videos/:video_id/download` 下载
+
+**后端接口**:
+- `POST /api/tasks/export`：参数 `{video_id}`
+  - 后端流程：
+    1. 根据 video_id 定位视频文件和字幕 SRT 文件
+    2. 构建 FFmpeg 命令 `ffmpeg -y -i video.mp4 -vf subtitles=sub.srt -c:a copy output.mp4`
+    3. 执行 FFmpeg 烧录编码（同步阻塞）
+    4. 返回 `{file_path}` 供前端下载
+- `GET /api/videos/:video_id/download`：返回导出的视频文件流（`Content-Type: video/mp4`），前端写入用户指定路径
+
+## 5. REST API 详细规格
+
+| Endpoint | Method | 请求体 | 响应体 | 说明 |
+|----------|--------|--------|--------|------|
+| `/api/videos/upload` | POST | multipart/form-data (video file) | `{video_id, video_info}` | 上传视频，提取音频 |
+| `/api/tasks/transcribe` | POST | `{video_id, language}` | `{task_id}` | 提交 DashScope 转写任务 |
+| `/api/tasks/:task_id` | GET | - | `{task_id, progress, status}` | 查询转写任务进度 |
+| `/api/videos/:video_id/subtitles` | GET | - | `[{id, start_time, end_time, text, style}]` | 获取字幕数据 |
+| `/api/videos/:video_id/audio` | GET | - | audio/wav 文件流 | 获取提取的音频文件 |
+| `/api/tasks/export` | POST | `{video_id}` | `{video_id, file_path}` | FFmpeg 烧录导出 |
+| `/api/videos/:video_id/download` | GET | - | video/mp4 文件流 | 下载导出视频 |
+| `/api/health` | GET | - | `{status, service, version}` | 健康检查 |
+
+**错误响应统一格式**:
+```json
 {
-  "video_id": "vid_abc123",
-  "subtitles": [
-    {
-      "id": 1,
-      "start_time": 0.0,
-      "end_time": 4.0,
-      "text": "你好，欢迎使用 SubtitleForge",
-      "style": { "font_size": 28 }
-    }
-  ],
-  "global_style": { "font_family": "Microsoft YaHei" }
-}
-
-Response 200:
-{
-  "updated": 1,
-  "global_style_updated": true
+  "error": true,
+  "code": "TRANSCRIBE_FAILED",
+  "message": "DashScope API call failed: timeout",
+  "details": {}
 }
 ```
 
-### 提交导出任务
+**错误码定义**:
+| 错误码 | 说明 |
+|--------|------|
+| `UPLOAD_FAILED` | 视频上传失败(格式不支持/文件损坏) |
+| `TRANSCRIBE_FAILED` | 字幕生成失败(API错误/网络问题) |
+| `EXPORT_FAILED` | 导出失败(FFmpeg错误/编码失败) |
+| `VIDEO_NOT_FOUND` | video_id 不存在 |
+| `INVALID_FORMAT` | 不支持的视频格式 |
 
-```
-POST /api/export
-Content-Type: application/json
+## 6. 数据模型定义
 
-Body:
-{
-  "video_id": "vid_abc123",
-  "format": "mp4",
-  "quality": "high"
-}
+### 6.1 Subtitle (字幕条)
 
-Response 202:
-{
-  "task_id": "660e8400-e29b-41d4-a716-446655440001",
-  "status": "queued"
-}
-```
-
-### 获取预览帧
-
-```
-GET /api/preview?video_id=vid_abc123&time=5.5&width=640
-
-Response 200:
-Content-Type: image/png
-(PNG 图片数据，带字幕叠加)
+```cpp
+struct Subtitle {
+    int id;
+    double start_time;    // 秒, 精度到 0.001
+    double end_time;      // 秒, 精度到 0.001
+    QString text;
+    SubtitleStyle style;
+};
 ```
 
-### 下载导出文件
+### 6.2 SubtitleStyle (字幕样式)
 
-```
-GET /api/download/:task_id
-
-Response 200:
-Content-Type: video/mp4
-Content-Disposition: attachment; filename="demo_subtitled.mp4"
-(视频文件数据)
-```
-
-## 核心工作流
-
-### 完整流程
-
-```
-上传视频 → 提取音频 → ASR识别 → 生成字幕 → 用户编辑 → 导出视频
-   │           │           │           │           │           │
-   ▼           ▼           ▼           ▼           ▼           ▼
- POST      Worker      Worker     GET/PUT     实时预览    Worker
- /upload   FFmpeg      whisper    /subtitles  /preview    FFmpeg
-           提取音频    逐片识别    编辑字幕    截帧+叠加   烧录字幕
+```cpp
+struct SubtitleStyle {
+    QString font_family = "Microsoft YaHei";
+    int font_size = 24;
+    QString color = "#FFFFFF";
+    QString bg_color = "#00000080";
+    QString position = "bottom_center";  // top_center/center/bottom_center
+    bool bold = false;
+    bool italic = false;
+    int outline_width = 2;
+    QString outline_color = "#000000";
+};
 ```
 
-### 大视频分片策略
+### 6.3 VideoInfo (视频信息)
 
-**ASR 识别分片：**
-1. FFmpeg 将音频提取为 16kHz WAV
-2. 按 30 秒分片，片间重叠 2 秒（避免断句截断）
-3. 每片送入 whisper.cpp 识别
-4. 识别完成后立即写入状态文件，主进程更新进度
-5. 全部片完成后合并结果，去重重叠部分
-6. 前端可实时看到字幕逐步生成（轮询任务进度）
-
-**导出分片处理：**
-1. 解析视频关键帧位置
-2. 按关键帧分段，每段独立烧录字幕
-3. 最后用 FFmpeg concat 合并所有分段
-4. 内存占用恒定，不受视频长度影响
-
-### Worker 生命周期
-
-```
-1. 主进程创建任务 → 写入任务配置 JSON 文件
-2. 主进程 fork/exec Worker 子进程，传入配置文件路径
-3. Worker 读取配置 → 执行任务 → 定期写进度状态文件
-4. 主进程轮询状态文件 → 更新任务进度 → 推送给前端
-5. Worker 完成/失败 → 写最终状态 → 退出
-6. 主进程回收子进程 → 更新任务最终状态
+```cpp
+struct VideoInfo {
+    QString video_id;
+    QString file_path;
+    QString audio_path;
+    double duration;
+    int width;
+    int height;
+    int fps;
+    QString format;
+    double size_mb;
+};
 ```
 
-## 前端设计
+### 6.4 TaskStatus (任务状态)
 
-### 布局
+```cpp
+struct TaskStatus {
+    QString task_id;
+    int progress = 0;       // 0-100
+    QString status;          // pending/processing/done/error
+    QString error_message;
+    int eta_seconds = 0;
+};
+```
+## 7. 项目目录结构
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│  SubtitleForge                    [上传视频] [导出]        │
-├──────────────────────────────────┬───────────────────────┤
-│                                  │                       │
-│                                  │   字幕列表面板         │
-│       视频预览区域                │ ┌───────────────────┐ │
-│    (HTML5 Video + Canvas叠加)     │ │ 1. 00:00-00:03    │ │
-│                                  │ │    你好世界         │ │
-│                                  │ │ 2. 00:03-00:06    │ │
-│                                  │ │    这是测试         │ │
-│                                  │ │ 3. 00:06-00:09    │ │
-│                                  │ │    字幕编辑         │ │
-│                                  │ └───────────────────┘ │
-│                                  │                       │
-│                                  │   样式调整面板         │
-│                                  │ 字体: [下拉] 大小:[24] │
-│                                  │ 颜色: [■] 描边: [■]   │
-│                                  │ 位置: [底部▼] 偏移:[0] │
-├──────────────────────────────────┴───────────────────────┤
-│  时间轴编辑区域 (Canvas)                                   │
-│  ┌─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┐   │
-│  │▓▓▓│ │▓▓▓▓▓│ │▓▓▓▓│ │▓▓▓▓▓▓▓│ │     │              │   │
-│  └─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┘   │
-│  00:00    00:10    00:20    00:30    00:40    00:50       │
-│  ▶ 播放  🔍 缩放  ✂ 拆分  🔄 合并                         │
-└──────────────────────────────────────────────────────────┘
-```
-
-### 前端模块
-
-| 模块 | 实现方式 | 功能 |
-|------|----------|------|
-| 视频上传 | 拖拽区域 + file input | 上传视频文件，显示上传进度 |
-| 视频预览 | HTML5 `<video>` + Canvas 叠加 | 播放视频，实时叠加字幕预览 |
-| 时间轴编辑 | Canvas 2D | 可视化字幕时间块，拖拽调整起止时间 |
-| 字幕列表 | DOM 列表 | 显示/编辑字幕文本，点击跳转对应时间 |
-| 样式面板 | 原生表单控件 | 调整字体、大小、颜色、描边、位置等 |
-| 导出面板 | 模态框 | 选择导出参数，显示导出进度，下载文件 |
-
-### 时间轴交互
-
-- **拖拽移动：** 鼠标按住字幕块左右拖动，调整起止时间
-- **拖拽边缘：** 拖动字幕块左右边缘，单独调整起始或结束时间
-- **双击编辑：** 双击字幕块弹出文字编辑输入框
-- **右键菜单：** 拆分、合并、删除、复制字幕
-- **缩放：** 鼠标滚轮缩放时间轴精度
-- **播放头：** 点击时间轴定位播放位置，播放时自动跟随
-- **选中高亮：** 点击字幕块选中，视频跳转到对应时间
-
-### Canvas 字幕叠加预览
-
-```
-视频帧 (HTML5 Video)
-    ↓
-Canvas drawImage(video, ...)
-    ↓
-Canvas fillText(subtitle.text, x, y)  ← 应用字幕样式
-    ↓
-显示带字幕的预览帧
-```
-
-- 使用 `requestAnimationFrame` 循环绘制
-- 仅在播放或手动跳转时更新
-- 字幕样式实时反映用户修改
-
-## 项目目录结构
-
-```
-SubtitleForge/
-├── CMakeLists.txt                    # 根 CMake 配置
-├── product.md                        # 本设计文档
+SubForge/
+├── CMakeLists.txt                    # 顶层构建配置
 ├── README.md                         # 项目说明
-├── src/
-│   ├── main.cpp                      # 程序入口
-│   ├── server/
-│   │   ├── http_server.h/cpp         # HTTP 服务器 + 路由注册
-│   │   ├── api_handlers.h/cpp        # API 处理函数
-│   │   └── middleware.h/cpp          # CORS、日志、限流中间件
-│   ├── task/
-│   │   ├── task_queue.h/cpp          # 任务队列 (内存+文件持久化)
-│   │   ├── task_scheduler.h/cpp      # 任务调度器 (分发/回收)
-│   │   └── task_types.h              # 任务类型/状态定义
-│   ├── worker/
-│   │   ├── worker_pool.h/cpp         # Worker 进程池管理
-│   │   ├── worker_process.h/cpp      # 子进程启动/通信/回收
-│   │   ├── asr_worker.cpp            # ASR Worker 主程序
-│   │   ├── export_worker.cpp         # 导出 Worker 主程序
-│   │   └── preview_worker.cpp        # 预览 Worker 主程序
-│   ├── core/
-│   │   ├── video_info.h/cpp          # 视频信息解析 (FFmpeg)
-│   │   ├── audio_extractor.h/cpp     # 音频提取 (FFmpeg)
-│   │   ├── subtitle_burner.h/cpp     # 字幕烧录 (FFmpeg drawtext)
-│   │   ├── frame_capture.h/cpp       # 视频截帧 (FFmpeg)
-│   │   └── subtitle_parser.h/cpp     # SRT/VTT 解析与生成
-│   └── utils/
-│       ├── logger.h/cpp              # spdlog 日志封装
-│       ├── file_utils.h/cpp          # 文件操作工具
-│       └── uuid.h/cpp                # UUID 生成
-├── frontend/
-│   └── index.html                    # 单 HTML 前端文件
-├── third_party/
-│   ├── cpp-httplib/                  # HTTP 库 (header-only)
-│   ├── nlohmann/                     # JSON 库 (header-only)
-│   └── spdlog/                       # 日志库
-├── tests/
-│   ├── test_task_queue.cpp           # 任务队列单元测试
-│   ├── test_subtitle_parser.cpp      # 字幕解析单元测试
-│   └── test_api.cpp                  # API 集成测试
-└── docs/
-    └── superpowers/
-        └── specs/
-            └── 2026-04-28-subtitle-forge-design.md
+├── .env.example                      # 环境变量模板 (DASHSCOPE_API_KEY=sk-xxx)
+├── .gitignore
+├── docs/
+│   ├── product.md                    # 产品设计文档
+│   └── superpowers/plans/
+├── shared/                           # 前后端共享数据模型
+│   ├── CMakeLists.txt
+│   ├── subtitle.h                    # Subtitle/SubtitleStyle 结构定义
+│   ├── video_info.h                  # VideoInfo 结构定义
+│   ├── task_status.h                 # TaskStatus 结构定义
+│   └── api_response.h                # 统一API响应格式定义
+├── backend/                          # C++ HTTP 后端（Linux）
+│   ├── CMakeLists.txt
+│   ├── src/
+│   │   ├── main.cpp                  # 服务入口, 启动 HTTP server
+│   │   ├── server.h/cpp              # HTTP 路由注册与处理
+│   │   ├── transcriber.h/cpp         # DashScope API 调用封装
+│   │   ├── transcribe_handler.h/cpp  # 转写任务 HTTP 处理
+│   │   ├── upload_handler.h/cpp      # 视频上传 HTTP 处理
+│   │   ├── export_handler.h/cpp      # FFmpeg 烧录导出封装
+│   │   ├── audio_extractor.h/cpp     # FFmpeg 音频提取封装
+│   │   ├── srt_parser.h/cpp          # SRT 格式解析
+│   │   ├── task_manager.h/cpp        # 异步任务管理(生成/导出进度)
+│   │   └── config.h/cpp              # .env 配置读取
+│   ├── third_party/
+│   │   ├── httplib.h                 # cpp-httplib 单头文件
+│   │   └── json.hpp                  # nlohmann/json 单头文件
+│   └── tests/
+│       ├── CMakeLists.txt
+│       └── test_server.cpp
+├── frontend/                         # Qt 6 前端（Windows）
+│   ├── CMakeLists.txt
+│   └── src/
+│       ├── main.cpp                  # Qt 应用入口
+│       ├── MainWindow.h/cpp          # 主窗口布局管理
+│       ├── VideoPlayerWidget.h/cpp   # 视频播放组件
+│       ├── TimelineEditor.h/cpp      # 时间轴编辑器(核心自定义组件)
+│       ├── SubtitleListWidget.h/cpp  # 字幕列表组件
+│       ├── StyleEditorWidget.h/cpp   # 样式编辑面板
+│       └── ApiClient.h/cpp           # HTTP 客户端封装
+└── scripts/                          # 构建与调试脚本
+    ├── build_frontend.bat            # Windows 前端构建
+    ├── build_backend.sh              # Linux 后端构建
+    ├── build_and_start.sh            # 后端一键构建+启动
+    ├── run_frontend.bat              # windeployqt + 启动前端
+    ├── rebuild_and_start.sh          # 后端强制重建+启动
+    └── ...                           # 调试与测试脚本
 ```
 
-## 构建与部署
+## 8. UI 交互设计
 
-### 依赖安装
+### 8.1 主窗口布局
 
-```bash
-# Windows (vcpkg)
-vcpkg install ffmpeg whisper.cpp spdlog nlohmann-json
-
-# macOS (brew)
-brew install ffmpeg whisper-cpp spdlog nlohmann-json
-
-# Ubuntu (apt + manual)
-sudo apt install libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  MenuBar: File | Tools | Export                                 │
+│  ToolBar: [Open] [Upload] [Play] [Pause] [Stop] [Generate]      │
+├────────────────────────────────┬────────────────────────────────┤
+│                                │  StyleEditorWidget             │
+│      VideoPlayerWidget         │  ┌──────────────────────────┐ │
+│      (QVideoWidget)            │  │ Font: [Microsoft YaHei ▼]│ │
+│      视频播放区域                │  │ Size: [24]               │ │
+│                                │  │ Position: [bottom_center] │ │
+│                                │  │ [B] [I]                   │ │
+│                                │  └──────────────────────────┘ │
+├────────────────────────────────┴────────────────────────────────┤
+│                 SubtitleListWidget (字幕列表)                     │
+├─────────────────────────────────────────────────────────────────┤
+│  TimelineEditor (时间轴编辑器 - 自定义 QWidget)                   │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ 00:00   00:05   00:10   00:15   00:20   00:25   00:30  │  │
+│  │ ┌─────┐┌──────────┐┌────┐┌──────────────────┐          │  │
+│  │ │字幕1││  字幕2    ││字3 ││    字幕4          │          │  │
+│  │ └─────┘└──────────┘└────┘└──────────────────┘          │  │
+│  │ │ ← 播放进度指示线 (红色)                                │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+│  StatusBar: 就绪                                                │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### CMake 构建
+### 8.2 交互流程
 
-```bash
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-cmake --build . -j$(nproc)
+**步骤1: 打开并上传视频**
+- 用户点击 "Open Video" 打开本地视频文件
+- 视频在前端直接播放，无需上传即可预览
+- 点击 "Upload" 将视频上传至后端 `/api/videos/upload`
+- 后端提取音频，返回 video_id 和 video_info
+
+**步骤2: 生成字幕**
+- 用户点击 "Generate Subtitles" 按钮
+- 前端调用 `/api/tasks/transcribe`
+- 自动轮询 `/api/tasks/:task_id` 显示进度
+- 生成完成后，字幕数据加载到时间轴编辑器和字幕列表
+
+**步骤3: 编辑字幕**
+- 用户在时间轴上点击选中字幕块
+- 在字幕列表中查看/管理所有字幕句
+- 在样式面板调整字体、大小、位置、加粗/斜体
+- 时间轴与播放器进度联动
+
+**步骤4: 导出视频**
+- 用户点击 "Export Video with Subtitles"
+- 弹出保存对话框（默认 Videos 文件夹）
+- 前端调用 `/api/tasks/export` → 等待后端 FFmpeg 烧录
+- 调用 `/api/videos/:video_id/download` 下载至用户指定路径
+
+### 8.3 暗色主题
+
+应用采用暗色主题(QSS样式表)，符合视频剪辑工具的专业审美：
+- 主背景色: `#1e1e2e`
+- 面板背景色: `#2d2d3d`
+- 文字色: `#e0e0e0`
+- 时间轴背景: `#252535`
+- 字幕块色: `#4a90d9` (选中高亮 `#6ab0ff`)
+- 播放指示线: `#ff4444`
+
+## 9. 配置管理
+
+### 9.1 .env 文件
+
+**后端(Linux) .env 配置** (项目根目录 `.env`):
+```env
+# 阿里云百炼 API (语音识别)
+DASHSCOPE_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
+
+# 后端服务配置
+SERVER_PORT=8080
+SERVER_HOST=0.0.0.0
+SERVER_BASE_URL=http://192.168.199.132:8080
+
+# FFmpeg 路径
+FFMPEG_PATH=/usr/local/bin/ffmpeg
+FFPROBE_PATH=/usr/local/bin/ffprobe
+
+# 临时文件目录
+TEMP_DIR=/tmp/subforge
+
+# 上传视频存储目录
+UPLOAD_DIR=/var/lib/subforge/uploads
 ```
 
-### 运行
+**前端(Windows) 配置**：通过 `QSettings("SubForge", "SubForge")` 保存后端地址，默认 `http://192.168.199.132:8080`。
 
-```bash
-./subtitleforge --port 8080 --data-dir ./data
-```
+### 9.2 配置加载
 
-浏览器打开 `http://localhost:8080` 即可使用。
+后端 `config.h/cpp` 负责加载 `.env` 文件，解析环境变量，提供全局配置访问接口。API Key 等敏感信息绝不硬编码到源码中。
 
-### 产出文件
+## 10. 错误处理策略
 
-| 文件 | 说明 |
-|------|------|
-| `subtitleforge` | 主程序（API 网关 + 任务调度） |
-| `asr_worker` | ASR Worker 可执行文件 |
-| `export_worker` | 导出 Worker 可执行文件 |
-| `preview_worker` | 预览 Worker 可执行文件 |
-| `index.html` | 前端界面（主程序自动服务） |
+### 10.1 后端错误处理
 
-## 非功能性需求
+- HTTP 服务全局异常捕获，统一返回 JSON 错误格式
+- DashScope API 调用失败：返回具体错误信息，超时 300 秒
+- FFmpeg 处理失败：返回具体错误信息(编码器不支持/格式问题等)
+- 文件不存在/损坏：返回 `VIDEO_NOT_FOUND` 或 `UPLOAD_FAILED`
+- 所有错误记录日志文件 `logs/subforge.log`
 
-### 性能
+### 10.2 前端错误处理
 
-| 指标 | 目标 |
-|------|------|
-| ASR 识别速度 | 1分钟音频 ≤ 15秒（base 模型） |
-| 视频上传 | 支持最大 2GB 文件 |
-| 预览帧生成 | ≤ 500ms/帧 |
-| 导出速度 | 1分钟视频 ≤ 30秒（硬字幕烧录） |
-| 并发任务 | 最多 3 个 Worker 并行 |
+- API 调用失败：弹出错误提示对话框，显示具体原因（含保存位置建议）
+- 网络断开：连接后端失败时提示检查服务状态
 
-### 可靠性
+## 11. 简历亮点总结
 
-- 任务队列文件持久化：进程崩溃后重启可恢复未完成任务
-- Worker 健康检查：主进程定期检查 Worker 存活状态
-- 超时机制：ASR 任务超时 30 分钟自动标记失败
-- 磁盘空间检查：上传前检查剩余空间
+作为大三 C++ 实习简历项目，SubForge 的核心展示点：
 
-### 安全性
+1. **C++ 后端工程能力**：Linux 环境 HTTP REST 服务设计、FFmpeg 集成调用、DashScope 大模型 API 封装、异步任务管理、JSON 数据序列化
+2. **Qt GUI 开发能力**：Windows 环境 Qt 6 桌面应用、自定义 QWidget(时间轴编辑器)、多媒体播放、信号槽机制、前后端 HTTP 通信
+3. **前后端分离架构思维**：REST API 规格设计、跨平台(Win/Linux)进程间 HTTP 通信、统一数据模型、错误码体系
+4. **跨平台 C++ 开发能力**：Linux 后端服务 + Windows Qt 前端，CMake 跨平台构建，VMware 虚拟机开发调试
+5. **完整产品交付能力**：从上传到导出的端到端全链路闭环，windeployqt 打包部署，功能可用
 
-- 文件类型校验：仅允许视频文件上传
-- 文件大小限制：默认 2GB 上限
-- 路径安全：禁止路径遍历攻击
-- CORS 限制：仅允许 localhost 访问
+## 12. 约束与边界
 
-## 简历亮点
+### 12.1 不做的事情(NOT scope)
 
-本项目在简历中可突出以下技术点：
+- 不做视频剪辑(裁剪/拼接视频片段) — 只做字幕相关
+- 不做软字幕嵌入(只做硬字幕烧录)
+- 不做实时语音转字幕(只做离线处理已有视频)
+- 不做多语言翻译(只做语音识别转字幕)
+- 不做云部署(后端部署在本地/内网 Linux 服务器，非公网云服务)
+- 不做用户账户系统(单用户本地工具)
 
-1. **C++ 系统编程：** 多进程架构、进程间通信、文件持久化任务队列
-2. **多媒体处理：** FFmpeg libav* API 调用、音频提取、视频编解码、字幕烧录
-3. **AI 集成：** whisper.cpp 本地 ASR 模型集成、分片识别策略
-4. **网络编程：** REST API 设计与实现、HTTP 服务器、CORS 中间件
-5. **前端工程：** Canvas 2D 时间轴编辑器、HTML5 Video API、单文件交付
-6. **架构设计：** 任务队列模式、Worker 进程池、分片处理策略
-7. **工程实践：** CMake 构建、单元测试、结构化日志
+### 12.2 技术约束
+
+- 视频格式支持: MP4、AVI、MKV、MOV
+- 导出格式: MP4 (H.264 硬字幕烧录)
+- 目标平台: 前端 Windows 10+，后端 Linux (Ubuntu 20.04+ / VMware 虚拟机)
+- 前后端通信: HTTP REST API (后端 IP: 192.168.199.132:8080)
+
+## 13. 依赖库清单
+
+| 库 | 版本 | 用途 | 引入方式 | 平台 |
+|----|------|------|----------|------|
+| Qt 6 | 6.11.0 | GUI框架、多媒体、网络 | CMake find_package | **Windows (前端)** |
+| cpp-httplib | 0.18+ | HTTP服务 | 单头文件 third_party/ | **Linux (后端)** |
+| nlohmann/json | 3.11+ | JSON序列化 | 单头文件 third_party/ | **Win + Linux** |
+| FFmpeg | 6.0+ | 视频音频处理 | 编译安装 / 系统包管理 | **Linux (后端)** |
+
+## 14. 验收标准
+
+### 14.1 功能验收
+
+- [x] 上传视频至后端，成功提取音频并返回 video_info
+- [x] 调用 DashScope (fun-asr) 生成字幕，返回带时间戳的字幕数据
+- [x] 时间轴编辑器可视化显示字幕块，可点击选中
+- [ ] 拖拽调整字幕块起止时间
+- [ ] 双击字幕块编辑文本
+- [x] 样式面板调整字体/大小/位置/加粗/斜体
+- [x] 导出 MP4 视频，字幕硬烧录到画面
+- [x] 全流程端到端可走通（上传 → 转写 → 编辑 → 导出 → 下载）
+
+### 14.2 工程质量验收
+
+- [x] CMake 构建：Windows 前端 + Linux 后端独立构建，零错误零警告
+- [x] API Key 配置：从 .env 文件读取，不硬编码
+- [x] 错误处理：所有 API 错误有统一 JSON 格式响应
+- [x] 前端 UI 主窗口完整（菜单/Toolbar/播放器/时间轴/字幕列表/样式面板）
+- [ ] 暗色主题/QSS 样式美化
+- [x] windeployqt 打包 DLL，双击 exe 可直接运行
