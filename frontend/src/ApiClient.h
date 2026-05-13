@@ -1,13 +1,11 @@
 #pragma once
 
+#include <QObject>
 #include <QString>
-#include <QVector>
+#include <QList>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
-
-namespace subforge {
-    struct Subtitle;
-}
+#include "subtitle.h"
 
 class ApiClient : public QObject {
     Q_OBJECT
@@ -21,14 +19,16 @@ public:
     void generate_subtitles(const QString& video_id, const QString& language = "auto");
     void get_task_status(const QString& task_id);
     void download_subtitles(const QString& video_id);
-    void export_video(const QString& video_id, const QVector<subforge::Subtitle>& subtitles);
+    void export_video(const QString& video_id, const QList<subforge::Subtitle>& subtitles);
+    void export_and_download(const QString& video_id, const QString& save_path);
     void download_exported(const QString& video_id);
 
 signals:
     void upload_finished(const QString& video_id, double duration, int width, int height);
-    void subtitles_ready(const QVector<subforge::Subtitle>& subtitles);
+    void subtitles_ready(const QList<subforge::Subtitle>& subtitles);
     void task_progress(const QString& task_id, int progress, const QString& status);
     void export_finished(const QString& file_path);
+    void export_downloaded(const QString& file_path);
     void download_ready(const QByteArray& data, const QString& filename);
     void error(const QString& message);
 

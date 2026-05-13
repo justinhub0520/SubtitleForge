@@ -1,17 +1,14 @@
 #pragma once
 
 #include <QMainWindow>
-#include <QVector>
-
-namespace subforge {
-    struct Subtitle;
-}
+#include <QList>
+#include "subtitle.h"
 
 class VideoPlayerWidget;
 class TimelineEditor;
 class SubtitleListWidget;
-class ApiClient;
 class StyleEditorWidget;
+class ApiClient;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -21,20 +18,16 @@ public:
 
 private slots:
     void on_open_video();
+    void on_upload_video();
     void on_generate_subtitles();
     void on_export_video();
     void on_export_srt();
     void on_subtitle_selected(int id);
-    void on_subtitle_changed(const QVector<subforge::Subtitle>& subtitles);
+    void on_subtitle_changed(const QList<subforge::Subtitle>& subtitles);
     void on_time_requested(double seconds);
     void on_position_changed(double seconds);
     void on_duration_changed(double seconds);
-    void on_upload_finished(const QString& video_id, double duration, int width, int height);
-    void on_subtitles_ready(const QVector<subforge::Subtitle>& subtitles);
-    void on_task_progress(const QString& task_id, int progress, const QString& status);
-    void on_export_finished(const QString& file_path);
-    void on_download_ready(const QByteArray& data, const QString& filename);
-    void on_api_error(const QString& message);
+    void on_style_changed(const subforge::SubtitleStyle& style);
 
 private:
     void setup_ui();
@@ -49,7 +42,7 @@ private:
     StyleEditorWidget* style_editor_;
     ApiClient* api_client_;
 
-    QVector<subforge::Subtitle> current_subtitles_;
+    QList<subforge::Subtitle> current_subtitles_;
     QString current_video_path_;
     QString current_video_id_;
     double video_duration_ = 0.0;

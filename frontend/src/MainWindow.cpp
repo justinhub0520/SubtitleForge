@@ -2,8 +2,8 @@
 #include "VideoPlayerWidget.h"
 #include "TimelineEditor.h"
 #include "SubtitleListWidget.h"
-#include "ApiClient.h"
 #include "StyleEditorWidget.h"
+#include "ApiClient.h"
 #include "subtitle.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -15,21 +15,25 @@
 #include <QMessageBox>
 #include <QStatusBar>
 #include <QProgressDialog>
-#include <QFile>
-#include <QTextStream>
 #include <QSettings>
+#include <QStandardPaths>
+#include <QDir>
+#include <QDockWidget>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle("SubForge - Video Subtitle Tool");
     resize(1200, 800);
+
+    api_client_ = new ApiClient(this);
 
     setup_ui();
     setup_menu();
     setup_toolbar();
     connect_signals();
 
-    QSettings settings;
-    api_client_->set_base_url(settings.value("server/url", "http://localhost:8080").toString());
+    QSettings settings("SubForge", "SubForge");
+    QString backend_url = settings.value("backend_url", "http://192.168.199.132:8080").toString();
+    api_client_->set_base_url(backend_url);
 }
 
 void MainWindow::setup_ui() {
@@ -39,31 +43,35 @@ void MainWindow::setup_ui() {
     auto main_layout = new QVBoxLayout(central);
     main_layout->setContentsMargins(4, 4, 4, 4);
 
-    auto top_splitter = new QSplitter(Qt::Horizontal, this);
     video_player_ = new VideoPlayerWidget(this);
-    top_splitter->addWidget(video_player_);
-
-    style_editor_ = new StyleEditorWidget(this);
-    style_editor_->setMaximumWidth(250);
-    top_splitter->addWidget(style_editor_);
-
-    top_splitter->setStretchFactor(0, 4);
-    top_splitter->setStretchFactor(1, 1);
-    main_layout->addWidget(top_splitter, 3);
+    video_player_->setMinimumHeight(300);
+    main_layout->addWidget(video_player_, 3);
 
     timeline_ = new TimelineEditor(this);
+    timeline_->setMinimumHeight(100);
     main_layout->addWidget(timeline_, 1);
 
+    auto bottom_splitter = new QSplitter(Qt::Horizontal, this);
     subtitle_list_ = new SubtitleListWidget(this);
-    main_layout->addWidget(subtitle_list_, 2);
+    bottom_splitter->addWidget(subtitle_list_);
+
+    style_editor_ = new StyleEditorWidget(this);
+    bottom_splitter->addWidget(style_editor_);
+
+    bottom_splitter->setSizes({700, 300});
+    main_layout->addWidget(bottom_splitter, 2);
 }
 
 void MainWindow::setup_menu() {
     auto file_menu = menuBar()->addMenu("&File");
 
-    auto open_action = file_menu->addAction("&Open Video");
+    auto open_action = file_menu->addAction("&Open Video (Local)");
     open_action->setShortcut(QKeySequence("Ctrl+O"));
     connect(open_action, &QAction::triggered, this, &MainWindow::on_open_video);
+
+    auto upload_action = file_menu->addAction("&Upload Video to Server");
+    upload_action->setShortcut(QKeySequence("Ctrl+U"));
+    connect(upload_action, &QAction::triggered, this, &MainWindow::on_upload_video);
 
     file_menu->addSeparator();
 
@@ -93,6 +101,9 @@ void MainWindow::setup_toolbar() {
     auto open_action = toolbar->addAction("Open");
     connect(open_action, &QAction::triggered, this, &MainWindow::on_open_video);
 
+    auto upload_action = toolbar->addAction("Upload");
+    connect(upload_action, &QAction::triggered, this, &MainWindow::on_upload_video);
+
     toolbar->addSeparator();
 
     auto play_action = toolbar->addAction("Play");
@@ -120,14 +131,31 @@ void MainWindow::connect_signals() {
     connect(video_player_, &VideoPlayerWidget::position_changed, this, &MainWindow::on_position_changed);
     connect(video_player_, &VideoPlayerWidget::duration_changed, this, &MainWindow::on_duration_changed);
 
-    api_client_ = new ApiClient(this);
+    connect(style_editor_, &StyleEditorWidget::style_changed, this, &MainWindow::on_style_changed);
 
-    connect(api_client_, &ApiClient::upload_finished, this, &MainWindow::on_upload_finished);
-    connect(api_client_, &ApiClient::subtitles_ready, this, &MainWindow::on_subtitles_ready);
-    connect(api_client_, &ApiClient::task_progress, this, &MainWindow::on_task_progress);
-    connect(api_client_, &ApiClient::export_finished, this, &MainWindow::on_export_finished);
-    connect(api_client_, &ApiClient::download_ready, this, &MainWindow::on_download_ready);
-    connect(api_client_, &ApiClient::error, this, &MainWindow::on_api_error);
+    connect(api_client_, &ApiClient::upload_finished, this, [this](const QString& video_id, double duration, int width, int height) {
+        current_video_id_ = video_id;
+        update_status_bar("Video uploaded: " + video_id + QString(" (%1x%2, %3s)").arg(width).arg(height).arg(duration, 0, 'f', 1));
+    });
+
+    connect(api_client_, &ApiClient::subtitles_ready, this, [this](const QList<subforge::Subtitle>& subtitles) {
+        current_subtitles_ = subtitles;
+        timeline_->set_subtitles(subtitles);
+        subtitle_list_->set_subtitles(subtitles);
+        update_status_bar("Subtitles generated: " + QString::number(subtitles.size()) + " segments");
+    });
+
+    connect(api_client_, &ApiClient::task_progress, this, [this](const QString& task_id, int progress, const QString& status) {
+        update_status_bar("Task " + task_id + ": " + status + " (" + QString::number(progress) + "%)");
+    });
+
+    connect(api_client_, &ApiClient::error, this, [this](const QString& message) {
+        QMessageBox::warning(this, "API Error", message);
+    });
+
+    connect(api_client_, &ApiClient::export_downloaded, this, [this](const QString& file_path) {
+        update_status_bar("Video exported: " + file_path);
+    });
 }
 
 void MainWindow::on_open_video() {
@@ -138,23 +166,31 @@ void MainWindow::on_open_video() {
     current_video_path_ = file_path;
     video_player_->load_video(file_path);
     update_status_bar("Video loaded: " + QFileInfo(file_path).fileName());
+}
 
-    api_client_->upload_video(file_path);
+void MainWindow::on_upload_video() {
+    if (current_video_path_.isEmpty()) {
+        QMessageBox::warning(this, "Warning", "Please open a video first.");
+        return;
+    }
+
+    update_status_bar("Uploading video...");
+    api_client_->upload_video(current_video_path_);
 }
 
 void MainWindow::on_generate_subtitles() {
     if (current_video_id_.isEmpty()) {
-        QMessageBox::warning(this, "Warning", "Please open and upload a video first.");
+        QMessageBox::warning(this, "Warning", "Please upload a video to server first.");
         return;
     }
 
-    api_client_->generate_subtitles(current_video_id_);
     update_status_bar("Generating subtitles...");
+    api_client_->generate_subtitles(current_video_id_);
 }
 
 void MainWindow::on_export_video() {
     if (current_video_id_.isEmpty()) {
-        QMessageBox::warning(this, "Warning", "Please open a video first.");
+        QMessageBox::warning(this, "Warning", "Please upload a video first.");
         return;
     }
 
@@ -163,8 +199,20 @@ void MainWindow::on_export_video() {
         return;
     }
 
-    api_client_->export_video(current_video_id_, current_subtitles_);
+    QString default_dir = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+    if (default_dir.isEmpty()) {
+        default_dir = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
+    }
+    if (default_dir.isEmpty()) {
+        default_dir = QDir::homePath();
+    }
+    QString save_path = QFileDialog::getSaveFileName(this, "Export Video with Subtitles",
+        default_dir + "/subtitled_video.mp4",
+        "MP4 Video (*.mp4);;All Files (*)");
+    if (save_path.isEmpty()) return;
+
     update_status_bar("Exporting video with subtitles...");
+    api_client_->export_and_download(current_video_id_, save_path);
 }
 
 void MainWindow::on_export_srt() {
@@ -199,7 +247,7 @@ void MainWindow::on_export_srt() {
             out << QString::fromStdString(sub.text) << "\n\n";
         }
         file.close();
-        update_status_bar("SRT exported: " + QFileInfo(file_path).fileName());
+        update_status_bar("SRT exported: " + file_path);
     }
 }
 
@@ -213,7 +261,7 @@ void MainWindow::on_subtitle_selected(int id) {
     }
 }
 
-void MainWindow::on_subtitle_changed(const QVector<subforge::Subtitle>& subtitles) {
+void MainWindow::on_subtitle_changed(const QList<subforge::Subtitle>& subtitles) {
     current_subtitles_ = subtitles;
     subtitle_list_->set_subtitles(subtitles);
 }
@@ -231,45 +279,12 @@ void MainWindow::on_duration_changed(double seconds) {
     timeline_->set_duration(seconds);
 }
 
-void MainWindow::on_upload_finished(const QString& video_id, double duration, int width, int height) {
-    current_video_id_ = video_id;
-    update_status_bar(QString("Video uploaded: %1 (%2s, %3x%4)")
-        .arg(video_id).arg(duration, 0, 'f', 1).arg(width).arg(height));
-}
-
-void MainWindow::on_subtitles_ready(const QVector<subforge::Subtitle>& subtitles) {
-    current_subtitles_ = subtitles;
-    timeline_->set_subtitles(subtitles);
-    subtitle_list_->set_subtitles(subtitles);
-    update_status_bar(QString("Subtitles generated: %1 segments").arg(subtitles.size()));
-}
-
-void MainWindow::on_task_progress(const QString& task_id, int progress, const QString& status) {
-    update_status_bar(QString("Task %1: %2% (%3)").arg(task_id).arg(progress).arg(status));
-}
-
-void MainWindow::on_export_finished(const QString& file_path) {
-    update_status_bar("Export completed: " + file_path);
-    api_client_->download_exported(current_video_id_);
-}
-
-void MainWindow::on_download_ready(const QByteArray& data, const QString& filename) {
-    QString save_path = QFileDialog::getSaveFileName(this, "Save Exported Video",
-        QFileInfo(current_video_path_).absolutePath() + "/subtitled_" + QFileInfo(current_video_path_).fileName(),
-        "Video Files (*.mp4);;All Files (*)");
-    if (save_path.isEmpty()) return;
-
-    QFile file(save_path);
-    if (file.open(QIODevice::WriteOnly)) {
-        file.write(data);
-        file.close();
-        update_status_bar("Video saved: " + QFileInfo(save_path).fileName());
+void MainWindow::on_style_changed(const subforge::SubtitleStyle& style) {
+    for (auto& sub : current_subtitles_) {
+        sub.style = style;
     }
-}
-
-void MainWindow::on_api_error(const QString& message) {
-    QMessageBox::warning(this, "API Error", message);
-    update_status_bar("Error: " + message);
+    timeline_->set_subtitles(current_subtitles_);
+    update_status_bar("Subtitle style updated");
 }
 
 void MainWindow::update_status_bar(const QString& message) {

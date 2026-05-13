@@ -1,12 +1,9 @@
 #pragma once
 
 #include <QWidget>
-#include <QVector>
+#include <QList>
 #include <QMouseEvent>
-
-namespace subforge {
-    struct Subtitle;
-}
+#include "subtitle.h"
 
 class TimelineEditor : public QWidget {
     Q_OBJECT
@@ -14,15 +11,15 @@ class TimelineEditor : public QWidget {
 public:
     explicit TimelineEditor(QWidget *parent = nullptr);
 
-    void set_subtitles(const QVector<subforge::Subtitle>& subtitles);
-    QVector<subforge::Subtitle> get_subtitles() const;
+    void set_subtitles(const QList<subforge::Subtitle>& subtitles);
+    QList<subforge::Subtitle> get_subtitles() const;
     void set_current_time(double seconds);
     void set_duration(double duration);
     void set_zoom(double zoom);
 
 signals:
     void subtitle_selected(int id);
-    void subtitle_changed(const QVector<subforge::Subtitle>& subtitles);
+    void subtitle_changed(const QList<subforge::Subtitle>& subtitles);
     void time_requested(double seconds);
 
 protected:
@@ -40,7 +37,7 @@ private:
     double x_to_time(int x) const;
     int find_subtitle_at(int x) const;
 
-    QVector<subforge::Subtitle> subtitles_;
+    QList<subforge::Subtitle> subtitles_;
     double current_time_ = 0.0;
     double duration_ = 0.0;
     double zoom_ = 100.0;

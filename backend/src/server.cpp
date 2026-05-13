@@ -42,6 +42,24 @@ void Server::setup_routes() {
     server_.Get("/api/videos/:video_id/download", [](const httplib::Request& req, httplib::Response& res) {
         ExportHandler::handle_download(req, res);
     });
+
+    server_.Get("/api/videos/:video_id/audio", [](const httplib::Request& req, httplib::Response& res) {
+        std::string video_id = req.path_params.at("video_id");
+        auto& config = Config::instance();
+        std::string audio_path = config.temp_dir() + "/" + video_id + "/audio.wav";
+
+        std::ifstream file(audio_path, std::ios::binary);
+        if (!file.is_open()) {
+            res.status = 404;
+            json err = {{"error", "Audio file not found"}};
+            res.set_content(err.dump(), "application/json");
+            return;
+        }
+
+        std::string data((std::istreambuf_iterator<char>(file)),
+                          std::istreambuf_iterator<char>());
+        res.set_content(data, "audio/wav");
+    });
 }
 
 void Server::handle_health(const httplib::Request& req, httplib::Response& res) {

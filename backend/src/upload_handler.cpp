@@ -45,7 +45,14 @@ void UploadHandler::handle_upload(const httplib::Request& req, httplib::Response
         auto& config = Config::instance();
         std::string upload_dir = config.upload_dir();
 
+        std::cerr << "[Upload] Received upload request, has_file: " << req.has_file("video") << std::endl;
+
         if (!req.has_file("video")) {
+            std::cerr << "[Upload] No video file in request. Files: ";
+            for (auto& [name, file] : req.files) {
+                std::cerr << name << "=" << file.filename << " ";
+            }
+            std::cerr << std::endl;
             res.status = 400;
             json err = {{"error", "No video file provided"}};
             res.set_content(err.dump(), "application/json");
@@ -53,11 +60,19 @@ void UploadHandler::handle_upload(const httplib::Request& req, httplib::Response
         }
 
         const auto& file = req.get_file_value("video");
+        std::cerr << "[Upload] File: " << file.filename << " size: " << file.content.size() << std::endl;
+
         std::string video_id = save_uploaded_file(file.content, file.filename, upload_dir);
+        std::cerr << "[Upload] Saved as: " << upload_dir << "/" << video_id << ".mp4" << std::endl;
+
+        std::string video_path = upload_dir + "/" + video_id + ".mp4";
 
         AudioExtractor extractor;
-        VideoInfo info = extractor.get_video_info(upload_dir + "/" + video_id + ".mp4");
+        std::cerr << "[Upload] Getting video info with ffprobe: " << config.ffprobe_path() << std::endl;
+        VideoInfo info = extractor.get_video_info(video_path);
         info.video_id = video_id;
+
+        std::cerr << "[Upload] Video info: " << info.duration << "s, " << info.width << "x" << info.height << std::endl;
 
         json response = {
             {"video_id", video_id},
@@ -70,6 +85,7 @@ void UploadHandler::handle_upload(const httplib::Request& req, httplib::Response
         };
         res.set_content(response.dump(), "application/json");
     } catch (const std::exception& e) {
+        std::cerr << "[Upload] ERROR: " << e.what() << std::endl;
         res.status = 500;
         json err = {{"error", e.what()}};
         res.set_content(err.dump(), "application/json");

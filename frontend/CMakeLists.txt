@@ -5,7 +5,7 @@ if(BUILD_FRONTEND)
     set(CMAKE_AUTOUIC ON)
     set(CMAKE_AUTORCC ON)
 
-    find_package(Qt6 REQUIRED COMPONENTS Widgets Multimedia Network)
+    find_package(Qt6 REQUIRED COMPONENTS Widgets Multimedia MultimediaWidgets Network)
 
     add_executable(subforge_frontend
         src/main.cpp
@@ -20,6 +20,7 @@ if(BUILD_FRONTEND)
     target_link_libraries(subforge_frontend PRIVATE
         Qt6::Widgets
         Qt6::Multimedia
+        Qt6::MultimediaWidgets
         Qt6::Network
         shared
     )

@@ -53,11 +53,13 @@ int Config::get_int(const std::string& key, int default_val) const {
 }
 
 std::string Config::whisper_api_key() const { return get("WHISPER_API_KEY"); }
+std::string Config::dashscope_api_key() const { return get("DASHSCOPE_API_KEY", whisper_api_key()); }
 std::string Config::server_host() const { return get("SERVER_HOST", "0.0.0.0"); }
 int Config::server_port() const { return get_int("SERVER_PORT", 8080); }
-std::string Config::ffmpeg_path() const { return get("FFMPEG_PATH", "/usr/bin/ffmpeg"); }
-std::string Config::ffprobe_path() const { return get("FFPROBE_PATH", "/usr/bin/ffprobe"); }
+std::string Config::ffmpeg_path() const { return get("FFMPEG_PATH", "/usr/local/bin/ffmpeg"); }
+std::string Config::ffprobe_path() const { return get("FFPROBE_PATH", "/usr/local/bin/ffprobe"); }
 std::string Config::temp_dir() const { return get("TEMP_DIR", "/tmp/subforge"); }
 std::string Config::upload_dir() const { return get("UPLOAD_DIR", "/var/lib/subforge/uploads"); }
+std::string Config::server_base_url() const { return get("SERVER_BASE_URL", "http://192.168.199.132:8080"); }
 
 } // namespace subforge

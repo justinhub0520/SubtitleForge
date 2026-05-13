@@ -1,5 +1,6 @@
 build/
 .env
+env_file.txt
 *.o
 *.obj
 *.exe
@@ -21,3 +22,7 @@ CMakeFiles/
 cmake_install.cmake
 Makefile
 .trae/
+
+# Build/debug artifact logs
+*_result.txt
+*_log.txt

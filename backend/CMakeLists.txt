@@ -24,7 +24,7 @@ if(BUILD_BACKEND)
     find_package(OpenSSL REQUIRED)
     find_package(ZLIB REQUIRED)
 
-    target_link_libraries(subforge_backend PRIVATE OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB)
+    target_link_libraries(subforge_backend PRIVATE OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB pthread)
 
     enable_testing()
     add_subdirectory(tests)

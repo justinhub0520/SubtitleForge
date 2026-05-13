@@ -1,5 +1,4 @@
 #include "StyleEditorWidget.h"
-#include <QVBoxLayout>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QFontComboBox>
@@ -8,7 +7,6 @@
 #include <QCheckBox>
 #include <QPushButton>
 #include <QColorDialog>
-#include <QLabel>
 
 StyleEditorWidget::StyleEditorWidget(QWidget *parent) : QWidget(parent) {
     setup_ui();
@@ -48,6 +46,7 @@ void StyleEditorWidget::setup_ui() {
     connect(position_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &StyleEditorWidget::on_style_changed);
     connect(bold_check_, &QCheckBox::toggled, this, &StyleEditorWidget::on_style_changed);
     connect(italic_check_, &QCheckBox::toggled, this, &StyleEditorWidget::on_style_changed);
+
     connect(color_button_, &QPushButton::clicked, this, [this]() {
         QColor color = QColorDialog::getColor(QColor(QString::fromStdString(current_style_.color)), this);
         if (color.isValid()) {
@@ -55,6 +54,7 @@ void StyleEditorWidget::setup_ui() {
             emit style_changed(current_style_);
         }
     });
+
     connect(bg_color_button_, &QPushButton::clicked, this, [this]() {
         QColor color = QColorDialog::getColor(QColor(QString::fromStdString(current_style_.bg_color)), this);
         if (color.isValid()) {

@@ -13,7 +13,7 @@ SubtitleListWidget::SubtitleListWidget(QWidget *parent) : QTableWidget(parent) {
     connect(this, &QTableWidget::cellClicked, this, &SubtitleListWidget::on_cell_clicked);
 }
 
-void SubtitleListWidget::set_subtitles(const QVector<subforge::Subtitle>& subtitles) {
+void SubtitleListWidget::set_subtitles(const QList<subforge::Subtitle>& subtitles) {
     is_updating_ = true;
     subtitles_ = subtitles;
     setRowCount(subtitles.size());
@@ -33,7 +33,7 @@ void SubtitleListWidget::set_subtitles(const QVector<subforge::Subtitle>& subtit
     is_updating_ = false;
 }
 
-QVector<subforge::Subtitle> SubtitleListWidget::get_subtitles() const {
+QList<subforge::Subtitle> SubtitleListWidget::get_subtitles() const {
     return subtitles_;
 }
 

@@ -4,10 +4,13 @@
 #include <QHttpMultiPart>
 #include <QHttpPart>
 #include <QFile>
+#include <QFileInfo>
+#include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QTimer>
+#include <QDebug>
 
 ApiClient::ApiClient(QObject *parent) : QObject(parent) {
     network_manager_ = new QNetworkAccessManager(this);
@@ -20,9 +23,15 @@ void ApiClient::set_base_url(const QString& url) {
 void ApiClient::upload_video(const QString& file_path) {
     QUrl url(base_url_ + "/api/videos/upload");
     QNetworkRequest request(url);
+    request.setTransferTimeout(60000);
+
+    qDebug() << "[ApiClient] Uploading to:" << url.toString();
 
     QFile *file = new QFile(file_path);
+    qDebug() << "[ApiClient] File path:" << file_path << "exists:" << file->exists() << "size:" << file->size();
+
     if (!file->open(QIODevice::ReadOnly)) {
+        qDebug() << "[ApiClient] Cannot open file:" << file->errorString();
         emit error("Cannot open file: " + file_path);
         file->deleteLater();
         return;
@@ -40,8 +49,15 @@ void ApiClient::upload_video(const QString& file_path) {
     QNetworkReply *reply = network_manager_->post(request, multi_part);
     multi_part->setParent(reply);
 
+    qDebug() << "[ApiClient] Request sent, waiting for response...";
+
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        qDebug() << "[ApiClient] Upload finished, error:" << reply->error() << "status:" << reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         on_upload_finished(reply);
+    });
+
+    connect(reply, &QNetworkReply::errorOccurred, this, [this, reply](QNetworkReply::NetworkError code) {
+        qDebug() << "[ApiClient] Upload error:" << reply->errorString();
     });
 }
 
@@ -107,7 +123,7 @@ void ApiClient::download_subtitles(const QString& video_id) {
     });
 }
 
-void ApiClient::export_video(const QString& video_id, const QVector<subforge::Subtitle>& subtitles) {
+void ApiClient::export_video(const QString& video_id, const QList<subforge::Subtitle>& subtitles) {
     QUrl url(base_url_ + "/api/tasks/export");
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
@@ -141,6 +157,70 @@ void ApiClient::download_exported(const QString& video_id) {
 
     connect(reply, &QNetworkReply::finished, this, [this, reply, video_id]() {
         on_download_finished(reply);
+    });
+}
+
+void ApiClient::export_and_download(const QString& video_id, const QString& save_path) {
+    QUrl url(base_url_ + "/api/tasks/export");
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    QJsonObject body;
+    body["video_id"] = video_id;
+
+    QNetworkReply *reply = network_manager_->post(request, QJsonDocument(body).toJson());
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, video_id, save_path]() {
+        if (reply->error() != QNetworkReply::NoError) {
+            emit error("Export failed: " + reply->errorString());
+            reply->deleteLater();
+            return;
+        }
+
+        QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+        if (!doc.isObject() || !doc.object().contains("video_id")) {
+            emit error("Export failed: invalid response");
+            reply->deleteLater();
+            return;
+        }
+        reply->deleteLater();
+
+        QUrl download_url(base_url_ + "/api/videos/" + video_id + "/download");
+        QNetworkRequest dl_req(download_url);
+        QNetworkReply *dl_reply = network_manager_->get(dl_req);
+
+        connect(dl_reply, &QNetworkReply::finished, this, [this, dl_reply, save_path]() {
+            if (dl_reply->error() != QNetworkReply::NoError) {
+                qDebug() << "[ApiClient] Download error:" << dl_reply->error() << dl_reply->errorString();
+                int http_status = dl_reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+                qDebug() << "[ApiClient] HTTP status:" << http_status;
+                emit error("Download failed: " + dl_reply->errorString());
+                dl_reply->deleteLater();
+                return;
+            }
+
+            QByteArray data = dl_reply->readAll();
+            dl_reply->deleteLater();
+
+            qDebug() << "[ApiClient] Download success, size:" << data.size() << "saving to:" << save_path;
+
+            QFileInfo fi(save_path);
+            QDir().mkpath(fi.absolutePath());
+
+            QFile file(save_path);
+            if (!file.open(QIODevice::WriteOnly)) {
+                qDebug() << "[ApiClient] Cannot open file:" << file.errorString();
+                QString err_msg = "Failed to save: " + save_path + "\nError: " + file.errorString();
+                err_msg += "\n\nTip: Try saving to a different location, such as your Desktop or Videos folder.";
+                emit error(err_msg);
+                return;
+            }
+            file.write(data);
+            file.close();
+
+            qDebug() << "[ApiClient] File saved successfully:" << save_path;
+            emit export_downloaded(save_path);
+        });
     });
 }
 
@@ -198,7 +278,7 @@ void ApiClient::on_subtitles_finished(QNetworkReply* reply) {
     QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
     QJsonArray arr = doc.array();
 
-    QVector<subforge::Subtitle> subtitles;
+    QList<subforge::Subtitle> subtitles;
     for (const auto& val : arr) {
         QJsonObject obj = val.toObject();
         subforge::Subtitle sub;

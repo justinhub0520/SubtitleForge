@@ -70,10 +70,20 @@ VideoInfo AudioExtractor::get_video_info(const std::string& video_path) {
     }
 
     if (probe.contains("format")) {
-        info.duration = probe["format"].value("duration", 0.0);
-        double size_bytes = probe["format"].value("size", 0.0);
+        auto& fmt = probe["format"];
+        if (fmt["duration"].is_string()) {
+            info.duration = std::stod(fmt["duration"].get<std::string>());
+        } else {
+            info.duration = fmt.value("duration", 0.0);
+        }
+        double size_bytes = 0.0;
+        if (fmt["size"].is_string()) {
+            size_bytes = std::stod(fmt["size"].get<std::string>());
+        } else {
+            size_bytes = fmt.value("size", 0.0);
+        }
         info.size_mb = size_bytes / (1024.0 * 1024.0);
-        info.format = probe["format"].value("format_name", "unknown");
+        info.format = fmt.value("format_name", "unknown");
     }
 
     return info;

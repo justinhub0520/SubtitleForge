@@ -13,12 +13,14 @@ public:
     int get_int(const std::string& key, int default_val = 0) const;
 
     std::string whisper_api_key() const;
+    std::string dashscope_api_key() const;
     std::string server_host() const;
     int server_port() const;
     std::string ffmpeg_path() const;
     std::string ffprobe_path() const;
     std::string temp_dir() const;
     std::string upload_dir() const;
+    std::string server_base_url() const;
 
 private:
     Config();

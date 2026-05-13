@@ -10,12 +10,12 @@ TimelineEditor::TimelineEditor(QWidget *parent) : QWidget(parent) {
     setMouseTracking(true);
 }
 
-void TimelineEditor::set_subtitles(const QVector<subforge::Subtitle>& subtitles) {
+void TimelineEditor::set_subtitles(const QList<subforge::Subtitle>& subtitles) {
     subtitles_ = subtitles;
     update();
 }
 
-QVector<subforge::Subtitle> TimelineEditor::get_subtitles() const {
+QList<subforge::Subtitle> TimelineEditor::get_subtitles() const {
     return subtitles_;
 }
 

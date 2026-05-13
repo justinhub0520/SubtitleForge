@@ -1,11 +1,8 @@
 #pragma once
 
 #include <QTableWidget>
-#include <QVector>
-
-namespace subforge {
-    struct Subtitle;
-}
+#include <QList>
+#include "subtitle.h"
 
 class SubtitleListWidget : public QTableWidget {
     Q_OBJECT
@@ -13,8 +10,8 @@ class SubtitleListWidget : public QTableWidget {
 public:
     explicit SubtitleListWidget(QWidget *parent = nullptr);
 
-    void set_subtitles(const QVector<subforge::Subtitle>& subtitles);
-    QVector<subforge::Subtitle> get_subtitles() const;
+    void set_subtitles(const QList<subforge::Subtitle>& subtitles);
+    QList<subforge::Subtitle> get_subtitles() const;
     void select_subtitle(int id);
 
 signals:
@@ -26,6 +23,6 @@ private slots:
     void on_cell_clicked(int row, int column);
 
 private:
-    QVector<subforge::Subtitle> subtitles_;
+    QList<subforge::Subtitle> subtitles_;
     bool is_updating_ = false;
 };

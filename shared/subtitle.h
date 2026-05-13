@@ -2,6 +2,8 @@
 
 #include <string>
 #include <vector>
+#include <QString>
+#include <QDataStream>
 
 namespace subforge {
 
@@ -26,3 +28,15 @@ struct Subtitle {
 };
 
 } // namespace subforge
+
+inline QDataStream& operator<<(QDataStream& stream, const subforge::Subtitle& sub) {
+    return stream << sub.id << sub.start_time << sub.end_time 
+                  << QString::fromStdString(sub.text);
+}
+
+inline QDataStream& operator>>(QDataStream& stream, subforge::Subtitle& sub) {
+    QString text;
+    stream >> sub.id >> sub.start_time >> sub.end_time >> text;
+    sub.text = text.toStdString();
+    return stream;
+}
